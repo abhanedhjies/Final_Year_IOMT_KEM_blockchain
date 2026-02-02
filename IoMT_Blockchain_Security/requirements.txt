@@ -1,0 +1,16 @@
+# Post-Quantum Cryptography (simulated for Phase 1)
+# Note: Full liboqs requires C compilation. Using pycryptodome for hash-based signatures
+# Full Kyber/Dilithium will be integrated in Phase 2 with pre-built binaries
+
+# Symmetric Cryptography
+pycryptodome>=3.19.0
+
+# MongoDB Off-Chain Storage
+pymongo>=4.6.0
+
+# Additional utilities
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Testing
+pytest>=7.4.3
