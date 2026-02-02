@@ -15,6 +15,7 @@ from typing import Dict, Any, List
 from storage import StorageManager
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import SHA256, HMAC
+from blockchain.auth_protocol import DeviceAuthenticationSession, AuthenticationProtocol
 
 try:
     from web3 import Web3
@@ -77,50 +78,66 @@ class GanacheBlockchainIntegration:
         """Load smart contract from deployment"""
         try:
             import os
-            # Try multiple possible paths
-            artifact_paths = [
-                'blockchain/artifacts/PostQuantumKeyRegistry.json',
-                'artifacts/PostQuantumKeyRegistry.json',
-                './blockchain/artifacts/PostQuantumKeyRegistry.json',
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Try to get deployed address from file
+            addr_paths = [
+                os.path.join(current_dir, 'blockchain/deployment_address.txt'),
+                os.path.join(current_dir, 'deployment_address.txt'),
+                'blockchain/deployment_address.txt',
+                'deployment_address.txt',
+                './blockchain/deployment_address.txt'
             ]
             
-            artifact_path = None
+            contract_address = None
+            for addr_path in addr_paths:
+                if os.path.exists(addr_path):
+                    try:
+                        with open(addr_path, 'r') as f:
+                            contract_address = f.read().strip()
+                        break
+                    except Exception:
+                        continue
+            
+            if not contract_address:
+                print("[-] Contract address not found in deployment files")
+                return False
+            
+            # Get ABI from artifact
+            artifact_paths = [
+                os.path.join(current_dir, 'blockchain/artifacts/PostQuantumKeyRegistry.json'),
+                os.path.join(current_dir, 'artifacts/PostQuantumKeyRegistry.json'),
+                'blockchain/artifacts/PostQuantumKeyRegistry.json',
+            ]
+            
+            contract_abi = None
             for path in artifact_paths:
                 if os.path.exists(path):
-                    artifact_path = path
-                    break
+                    try:
+                        with open(path, 'r') as f:
+                            artifact = json.load(f)
+                            contract_abi = artifact.get('abi')
+                        break
+                    except Exception:
+                        continue
             
-            if not artifact_path:
-                print("[-] Contract artifact not found")
+            if not contract_abi:
+                print("[-] Contract ABI not found")
                 return False
-                
-            with open(artifact_path, 'r') as f:
-                artifact = json.load(f)
-                contract_abi = artifact['abi']
-                
-                # Try to get deployed address from file
-                try:
-                    addr_paths = ['blockchain/deployment_address.txt', 'deployment_address.txt', './blockchain/deployment_address.txt']
-                    contract_address = None
-                    for addr_path in addr_paths:
-                        if os.path.exists(addr_path):
-                            with open(addr_path, 'r') as addr_file:
-                                contract_address = addr_file.read().strip()
-                                break
-                    
-                    if contract_address:
-                        self.contract = self.w3.eth.contract(
-                            address=Web3.to_checksum_address(contract_address),
-                            abi=contract_abi
-                        )
-                        print(f"[+] Contract loaded at: {contract_address}")
-                        return True
-                    else:
-                        print("[-] Contract deployment address file not found")
-                        return False
-                except Exception as e:
-                    print(f"[-] Error reading contract address: {e}")
-                    return False
+            
+            # Verify contract exists at address
+            code = self.w3.eth.get_code(Web3.to_checksum_address(contract_address))
+            if len(code) == 0:
+                print(f"[-] No contract code at address {contract_address}")
+                return False
+            
+            # Load contract
+            self.contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(contract_address),
+                abi=contract_abi
+            )
+            print(f"[+] Contract loaded at: {contract_address}")
+            return True
                     
         except Exception as e:
             print(f"[-] Error loading contract: {e}")
@@ -129,6 +146,9 @@ class GanacheBlockchainIntegration:
     def register_device_on_blockchain(self, device_id: str, public_key: str, shared_secret: str) -> Dict[str, Any]:
         """Register device on blockchain"""
         if not self.contract:
+            print(f"[DEBUG] register_device_on_blockchain: self.contract is None!")
+            print(f"[DEBUG] self.w3.is_connected: {self.w3.is_connected() if self.w3 else 'w3 is None'}")
+            print(f"[DEBUG] self.account: {self.account}")
             return {"success": False, "error": "Contract not deployed"}
         
         try:
@@ -742,6 +762,7 @@ def create_dashboard_app(storage: StorageManager, blockchain: GanacheBlockchainI
                 <div class="status-badges">
                     <div class="badge badge-success" id="mongoStatus">✓ MongoDB: Connected</div>
                     <div class="badge" id="ganacheStatus">Loading...</div>
+                    <div style="margin-left: auto;"><a href="/decryption" style="color: #764ba2; font-weight:700; text-decoration:none;">Decryption & Auth Page →</a></div>
                 </div>
             </header>
             
@@ -1204,6 +1225,113 @@ def create_dashboard_app(storage: StorageManager, blockchain: GanacheBlockchainI
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
     
+    @app.route('/api/device-sensor-reading/<device_id>', methods=['POST'])
+    def device_sensor_reading(device_id):
+        """Simulate IoT device generating and encrypting a sensor reading"""
+        try:
+            data = request.json or {}
+            sensor_type = data.get('sensor_type', 'ECG')
+            reading_value = data.get('reading_value', 'HR=72,BP=120/80,O2=98')
+            
+            # Get device's encryption keys from storage
+            key_record = storage.get_device_key(device_id)
+            if not key_record:
+                return jsonify({"success": False, "error": "Device not registered"}), 404
+            
+            shared_secret_hex = key_record.get('shared_secret')
+            gateway_id = key_record.get('gateway_id', 'GATEWAY_HUB_001')
+            
+            if not shared_secret_hex:
+                return jsonify({"success": False, "error": "No shared secret"}), 400
+            
+            # Normalize hex
+            if isinstance(shared_secret_hex, str) and shared_secret_hex.startswith('0x'):
+                shared_secret_hex = shared_secret_hex[2:]
+            
+            shared_secret_bytes = bytes.fromhex(shared_secret_hex)
+            session_id = f"{device_id}_{gateway_id}"
+            
+            # Device derives session key (same as gateway will use)
+            session_key, auth_tag = AuthenticationProtocol.create_session_key(shared_secret_bytes, session_id)
+            
+            # Device encrypts the reading
+            plaintext = f"{sensor_type}:{reading_value}".encode()
+            sess = DeviceAuthenticationSession(device_id, gateway_id)
+            sess.session_key = session_key
+            sess.state = 'AUTHENTICATED'
+            
+            encrypted_payload = sess.encrypt_message(plaintext)
+            
+            # Return ONLY the encrypted payload (like a real device would send)
+            return jsonify({
+                "success": True,
+                "device_id": device_id,
+                "timestamp": datetime.now().isoformat(),
+                "encrypted_payload": encrypted_payload,
+                "message": "Encrypted sensor reading ready to send to gateway"
+            }), 200
+            
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+    
+    @app.route('/api/gateway-decrypt-device-data', methods=['POST'])
+    def gateway_decrypt_device_data():
+        """Gateway receives encrypted data from IoT device and decrypts it"""
+        try:
+            data = request.json or {}
+            device_id = data.get('device_id')
+            encrypted_payload = data.get('encrypted_payload')
+            
+            if not device_id or not encrypted_payload:
+                return jsonify({"success": False, "error": "Missing device_id or encrypted_payload"}), 400
+            
+            # Gateway retrieves device keys from storage
+            key_record = storage.get_device_key(device_id)
+            if not key_record:
+                return jsonify({"success": False, "error": "Device not found"}), 404
+            
+            shared_secret_hex = key_record.get('shared_secret')
+            gateway_id = key_record.get('gateway_id', 'GATEWAY_HUB_001')
+            
+            if not shared_secret_hex:
+                return jsonify({"success": False, "error": "No shared secret for device"}), 400
+            
+            # Normalize hex
+            if isinstance(shared_secret_hex, str) and shared_secret_hex.startswith('0x'):
+                shared_secret_hex = shared_secret_hex[2:]
+            
+            shared_secret_bytes = bytes.fromhex(shared_secret_hex)
+            session_id = f"{device_id}_{gateway_id}"
+            
+            # Gateway derives the SAME session key
+            session_key, auth_tag = AuthenticationProtocol.create_session_key(shared_secret_bytes, session_id)
+            
+            # Gateway decrypts
+            sess = DeviceAuthenticationSession(device_id, gateway_id)
+            sess.session_key = session_key
+            sess.state = 'AUTHENTICATED'
+            
+            iv_hex = encrypted_payload.get('iv')
+            ciphertext_hex = encrypted_payload.get('ciphertext')
+            hmac_hex = encrypted_payload.get('hmac')
+            
+            decrypted = sess.decrypt_message(iv_hex, ciphertext_hex, hmac_hex)
+            
+            # Verify on blockchain
+            blockchain_info = blockchain.get_device_from_blockchain(device_id) if blockchain else {"error": "blockchain not initialized"}
+            
+            return jsonify({
+                "success": True,
+                "device_id": device_id,
+                "decrypted_sensor_reading": decrypted.decode() if decrypted else None,
+                "verified_on_blockchain": True if 'error' not in blockchain_info else False,
+                "blockchain_status": blockchain_info,
+                "message": "Data decrypted and verified from blockchain"
+            }), 200
+            
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route('/api/encryption-details/<device_id>', methods=['GET'])
     def encryption_details(device_id):
         """Get encryption details for a device"""
@@ -1212,6 +1340,135 @@ def create_dashboard_app(storage: StorageManager, blockchain: GanacheBlockchainI
             return jsonify(details), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/simulate-encrypted', methods=['POST'])
+    def simulate_encrypted():
+        """Simulate a device sending an encrypted message and gateway decryption"""
+        try:
+            data = request.json or {}
+            device_id = data.get('device_id')
+            plaintext = (data.get('plaintext') or '').encode()
+
+            if not device_id:
+                return jsonify({'success': False, 'error': 'device_id required'}), 400
+
+            key_record = storage.get_device_key(device_id)
+            if not key_record:
+                return jsonify({'success': False, 'error': 'Device not found in DB'}), 404
+
+            # Extract shared secret and gateway id
+            shared_secret_hex = key_record.get('shared_secret')
+            gateway_id = key_record.get('gateway_id', 'GATEWAY_HUB_001')
+
+            if not shared_secret_hex:
+                return jsonify({'success': False, 'error': 'No shared secret for device'}), 400
+
+            # Normalize hex
+            if isinstance(shared_secret_hex, str) and shared_secret_hex.startswith('0x'):
+                shared_secret_hex = shared_secret_hex[2:]
+
+            shared_secret_bytes = bytes.fromhex(shared_secret_hex)
+
+            # Deterministic session id for demo: device_gateway
+            session_id = f"{device_id}_{gateway_id}"
+
+            # Derive session key
+            session_key, auth_tag = AuthenticationProtocol.create_session_key(shared_secret_bytes, session_id)
+
+            # Create a session object (used for encrypt/decrypt helpers)
+            sess = DeviceAuthenticationSession(device_id, gateway_id)
+            sess.session_key = session_key
+            sess.state = 'AUTHENTICATED'
+
+            # Device encrypts the message
+            encrypted = sess.encrypt_message(plaintext)
+
+            # Gateway decrypts the message (same session key)
+            decrypted = sess.decrypt_message(encrypted['iv'], encrypted['ciphertext'], encrypted['hmac'])
+
+            # Fetch on-chain device info
+            blockchain_info = blockchain.get_device_from_blockchain(device_id) if blockchain else {'error': 'blockchain not initialized'}
+
+            return jsonify({
+                'success': True,
+                'device_id': device_id,
+                'encrypted': encrypted,
+                'decrypted_text': decrypted.decode() if decrypted else None,
+                'auth_tag': auth_tag.hex(),
+                'blockchain_info': blockchain_info
+            }), 200
+
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/decryption', methods=['GET'])
+    def decryption_page():
+        """Render the Decryption & Authentication demo page"""
+        page_html = '''
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Decryption & Authentication</title>
+          <style>
+            body{font-family:Segoe UI, Tahoma, Geneva, Verdana, sans-serif;padding:20px;background:#f6f8fb}
+            .panel{background:#fff;padding:20px;border-radius:8px;max-width:900px;margin:0 auto;box-shadow:0 6px 18px rgba(0,0,0,0.08)}
+            label{display:block;margin-top:10px;font-weight:600}
+            textarea,input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px}
+            button{margin-top:12px;padding:10px 14px;background:#667eea;color:#fff;border:none;border-radius:6px}
+            pre{background:#0f1724;color:#dbeafe;padding:12px;border-radius:6px;overflow:auto}
+          </style>
+        </head>
+        <body>
+          <div class="panel">
+            <h2>Decryption & Authentication Demo</h2>
+            <p>Simulate a connected device sending encrypted data; gateway will decrypt and display result along with blockchain verification.</p>
+
+            <label>Select Device</label>
+            <select id="deviceSelect"></select>
+
+            <label>Plaintext to send</label>
+            <textarea id="plaintext">Patient blood pressure: 120/80</textarea>
+
+            <button onclick="simulate()">Simulate Send & Decrypt</button>
+
+            <h3>Encrypted Payload</h3>
+            <pre id="encrypted"></pre>
+
+            <h3>Decrypted Result</h3>
+            <pre id="decrypted"></pre>
+
+            <h3>Blockchain Verification</h3>
+            <pre id="blockchain"></pre>
+          </div>
+
+          <script>
+            function loadDevices(){
+              fetch('/api/stored-devices').then(r=>r.json()).then(list=>{
+                const sel=document.getElementById('deviceSelect');
+                sel.innerHTML='<option value="">-- Select --</option>' + list.map(d=>`<option value="${d.device_id}">${d.device_id}</option>`).join('');
+              })
+            }
+
+            function simulate(){
+              const device=document.getElementById('deviceSelect').value;
+              const pt=document.getElementById('plaintext').value;
+              if(!device){ alert('Select a device'); return; }
+              fetch('/api/simulate-encrypted',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:device, plaintext:pt})})
+                .then(r=>r.json()).then(resp=>{
+                  if(!resp.success){ alert(resp.error||'error'); return; }
+                  document.getElementById('encrypted').textContent = JSON.stringify(resp.encrypted,null,2);
+                  document.getElementById('decrypted').textContent = resp.decrypted_text || 'DECRYPTION_FAILED';
+                  document.getElementById('blockchain').textContent = JSON.stringify(resp.blockchain_info,null,2);
+                })
+            }
+
+            loadDevices();
+          </script>
+        </body>
+        </html>
+        '''
+        return render_template_string(page_html)
     
     @app.route('/api/stored-devices', methods=['GET'])
     def stored_devices():
