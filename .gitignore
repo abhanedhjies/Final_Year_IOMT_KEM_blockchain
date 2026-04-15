@@ -46,7 +46,7 @@ node_modules/
 *.elf
 *.bin
 
-# Root-level setup/documentation files (keep only IoMT_Blockchain_Security and conference_paper)
+# Root-level setup/documentation files (keep only IoMT_Blockchain_Security)
 _fix_symbols.py
 ESP32_COMMAND_REFERENCE.txt
 ESP32_COMPLETE_SETUP.md
@@ -66,3 +66,5 @@ README_ESP32_SETUP.txt
 START_HERE_ESP32.txt
 test_arduino_simulation.py
 run_dashboard.py
+conference/
+conference_paper/
