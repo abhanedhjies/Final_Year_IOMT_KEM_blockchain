@@ -30,7 +30,7 @@ class StorageManager:
             # Test connection
             self.client.admin.command('ping')
             
-            self.db = self.client['iot_blockchain_db']
+            self.db = self.client['iomt_blockchain']
             
             # Initialize collections
             self._initialize_collections()
@@ -201,6 +201,68 @@ class StorageManager:
         except Exception as e:
             print(f"[-] Error getting statistics: {e}")
             return {}
+    
+    def save_esp_device_status(self, device_id: str, status_data: Dict[str, Any]) -> bool:
+        """Save ESP device connection status"""
+        if not self.connected:
+            return False
+        
+        try:
+            # Initialize collection if needed (handle MongoDB safely)
+            if 'esp_devices' not in self.db.list_collection_names():
+                try:
+                    self.db.create_collection('esp_devices')
+                    self.db['esp_devices'].create_index('device_id', unique=True)
+                except Exception as e:
+                    # Collection might have been created by another process
+                    pass
+            
+            status_data['device_id'] = device_id
+            status_data['updated_at'] = datetime.now()
+            
+            self.db['esp_devices'].update_one(
+                {'device_id': device_id},
+                {'$set': status_data},
+                upsert=True
+            )
+            
+            return True
+            
+        except Exception as e:
+            print(f"[-] Error saving ESP device status: {e}")
+            return False
+    
+    def get_esp_device_status(self, device_id: str) -> Optional[Dict]:
+        """Get ESP device connection status"""
+        if not self.connected:
+            return None
+        
+        try:
+            device = self.db['esp_devices'].find_one({'device_id': device_id})
+            return device
+            
+        except Exception as e:
+            print(f"[-] Error getting ESP device status: {e}")
+            return None
+    
+    def get_all_esp_device_statuses(self) -> List[Dict]:
+        """Get all ESP device statuses"""
+        if not self.connected:
+            return []
+        
+        try:
+            devices = list(self.db['esp_devices'].find().sort('updated_at', -1))
+            
+            # Convert ObjectId to string for JSON serialization
+            for device in devices:
+                if '_id' in device:
+                    device['_id'] = str(device['_id'])
+            
+            return devices
+            
+        except Exception as e:
+            print(f"[-] Error getting ESP device statuses: {e}")
+            return []
     
     def disconnect(self):
         """Disconnect from MongoDB"""

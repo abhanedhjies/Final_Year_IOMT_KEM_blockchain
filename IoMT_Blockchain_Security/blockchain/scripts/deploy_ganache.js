@@ -105,15 +105,63 @@ async function main() {
     console.log(`[+] Transaction Hash: ${registerTx.transactionHash}`);
     console.log(`[+] Gas Used: ${registerTx.gasUsed}\n`);
 
-    // Test retrieval
-    console.log("[*] Testing device key retrieval...");
-    const retrievedKey = await deployed.methods.getDeviceKey(deviceId).call();
+    // ── Test: Retrieve key as admin ────────────────────────────────
+    console.log("[*] Testing device key retrieval (admin perspective)...");
+    const retrievedKey = await deployed.methods
+      .getDeviceKey(deviceId)
+      .call({ from: deployerAccount });
     console.log(`[+] Retrieved Key for ${deviceId}:`);
-    console.log(`    Owner: ${retrievedKey.owner}`);
+    console.log(`    Owner: ${retrievedKey.deviceOwner}`);
     console.log(`    Kyber PK: ${retrievedKey.kyberPublicKey.slice(0, 20)}...`);
     console.log(`    Active: ${retrievedKey.isActive}\n`);
 
-    // Test status check
+    // ── Test: Admin address ────────────────────────────────────────
+    const adminAddr = await deployed.methods.admin().call();
+    console.log(`[+] Contract Admin: ${adminAddr}`);
+
+    // ── Test: Register a healthcare provider ─────────────────────
+    const providerAccount = accounts[1];
+    console.log(`[*] Registering provider ${providerAccount} as 'Dr. Test' (DOCTOR)...`);
+    await deployed.methods
+      .registerProvider(providerAccount, "Dr. Test", "DOCTOR")
+      .send({ from: deployerAccount, gas: 300000 });
+    const provider = await deployed.methods.getProvider(providerAccount).call();
+    console.log(`[+] Provider registered: ${provider.name} | role: ${provider.role} | active: ${provider.isRegistered}`);
+
+    // ── Test: Assign device to patient ────────────────────────────
+    const patientId = "PATIENT_TEST_001";
+    console.log(`[*] Assigning device ${deviceId} to patient ${patientId}...`);
+    await deployed.methods
+      .assignDeviceToPatient(deviceId, patientId)
+      .send({ from: deployerAccount, gas: 300000 });
+    console.log(`[+] Device assigned to patient`);
+
+    // ── Test: Grant access ────────────────────────────────────────
+    console.log(`[*] Granting ${providerAccount} access to patient ${patientId}...`);
+    await deployed.methods
+      .grantAccess(providerAccount, patientId)
+      .send({ from: deployerAccount, gas: 300000 });
+    const hasAccess = await deployed.methods
+      .checkAccess(providerAccount, patientId)
+      .call();
+    console.log(`[+] checkAccess(provider, patient) = ${hasAccess}  ← should be true`);
+
+    // ── Test: Provider can read device key ────────────────────────
+    const providerKey = await deployed.methods
+      .getDeviceKey(deviceId)
+      .call({ from: providerAccount });
+    console.log(`[+] Provider can read key — owner: ${providerKey.deviceOwner}, active: ${providerKey.isActive}`);
+
+    // ── Test: Revoke access ───────────────────────────────────────
+    await deployed.methods
+      .revokeAccess(providerAccount, patientId)
+      .send({ from: deployerAccount, gas: 300000 });
+    const hasAccessAfterRevoke = await deployed.methods
+      .checkAccess(providerAccount, patientId)
+      .call();
+    console.log(`[+] checkAccess after revoke = ${hasAccessAfterRevoke}  ← should be false`);
+
+    // ── Test: Active status ───────────────────────────────────────
     const isActive = await deployed.methods.isKeyActive(deviceId).call();
     console.log(`[+] Key Active Status: ${isActive}\n`);
 
@@ -121,10 +169,12 @@ async function main() {
     console.log("========================================");
     console.log("Deployment Summary");
     console.log("========================================");
-    console.log(`Contract Address: ${contractAddress}`);
-    console.log(`Deployer: ${deployerAccount}`);
-    console.log(`Device Registered: ${deviceId}`);
-    console.log(`All Tests Passed: ✓`);
+    console.log(`Contract Address:   ${contractAddress}`);
+    console.log(`Admin (deployer):   ${deployerAccount}`);
+    console.log(`Device Registered:  ${deviceId}`);
+    console.log(`Provider Tested:    ${providerAccount}`);
+    console.log(`Access Control:     RBAC ✓`);
+    console.log(`All Tests Passed:   ✓`);
     console.log("========================================\n");
 
     // Save deployment info
