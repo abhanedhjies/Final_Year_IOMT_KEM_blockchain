@@ -1,0 +1,68 @@
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node/Blockchain
+node_modules/
+.env
+.env.local
+*.log
+
+# Arduino/ESP32
+.arduino15/
+*.o
+*.elf
+*.bin
+
+# Root-level setup/documentation files (keep only IoMT_Blockchain_Security and conference_paper)
+_fix_symbols.py
+ESP32_COMMAND_REFERENCE.txt
+ESP32_COMPLETE_SETUP.md
+ESP32_DATA_FLOW_DIAGRAM.txt
+ESP32_FILES_GUIDE.txt
+ESP32_PROGRAMMING_CHECKLIST.txt
+ESP32_SETUP_CHECKLIST.txt
+ESP32_TROUBLESHOOTING.txt
+ESP8266_FLASH_DIAGNOSTIC.ps1
+FIX_ARDUINOJSON_MISSING.txt
+FIX_ARDUINOJSON_QUICK.txt
+FIX_DOCSTRING_ERROR.txt
+FIX_FQBN_ERROR.txt
+FQBN_QUICK_FIX.txt
+FQBN_VISUAL_FIX.txt
+README_ESP32_SETUP.txt
+START_HERE_ESP32.txt
+test_arduino_simulation.py
+run_dashboard.py
